@@ -42,6 +42,7 @@
 #include "catalog/ag_graph.h"
 #include "catalog/ag_label.h"
 #include "commands/label_commands.h"
+#include "parser/cypher_analyze.h"
 #include "parser/cypher_clause.h"
 #include "parser/cypher_expr.h"
 #include "parser/cypher_item.h"
@@ -424,9 +425,8 @@ Query *transform_cypher_clause(cypher_parsestate *cpstate,
 }
 
 /*
- * Transform the UNION operator/clause. Creates a cypher_union
- * node and the necessary information needed in the execution
- * phase
+ * Makes a cypher_clause from a list of nodes. Used by union
+ * and subquery procedures to generate a subquery to transform.
  */
 
 static cypher_clause *make_cypher_clause(List *stmt)
@@ -447,6 +447,23 @@ static cypher_clause *make_cypher_clause(List *stmt)
         next->next = NULL;
         next->self = lfirst(lc);
         next->prev = clause;
+
+        /* check for subqueries in match */
+        if (is_ag_node(next->self, cypher_match))
+        {
+            cypher_match *match = (cypher_match *)next->self;
+
+            if (match->where != NULL && expr_contains_node(expr_has_subquery, match->where))
+            {
+               /* advance the clause iterator to the intermediate clause position */
+               clause = build_subquery_node(next);
+
+               /* set the next of the match to the where_container_clause */
+               match->where = NULL;
+               next->next = clause;
+               continue;
+            }
+        }
 
         if (clause != NULL)
         {
@@ -783,6 +800,8 @@ transform_cypher_union_tree(cypher_parsestate *cpstate, cypher_clause *clause,
         /*
          * Extract a list of the non-junk TLEs for upper-level processing.
          */
+
+        //mechanism to check for top level query list items here?
         if (targetlist)
         {
             *targetlist = NIL;
@@ -863,8 +882,11 @@ transform_cypher_union_tree(cypher_parsestate *cpstate, cypher_clause *clause,
         /*
          * Verify that the two children have the same number of non-junk
          * columns, and determine the types of the merged output columns.
+         * If we are in a returnless subquery, we do not care about the columns
+         * matching, because they are not relevant to the end result.
          */
-        if (list_length(ltargetlist) != list_length(rtargetlist))
+        if (list_length(ltargetlist) != list_length(rtargetlist) &&
+            self->returnless_union == false)
         {
             ereport(ERROR,
                     (errcode(ERRCODE_SYNTAX_ERROR),
@@ -2392,14 +2414,51 @@ static Query *transform_cypher_clause_with_where(cypher_parsestate *cpstate,
         {
             List *groupClause = NIL;
             ListCell *li;
+            bool has_a_star;
+
+            has_a_star = false;
             query->jointree = makeFromExpr(pstate->p_joinlist, NULL);
             query->havingQual = where_qual;
 
             foreach (li, ((cypher_return *)self)->items)
             {
                 ResTarget *item = lfirst(li);
+                ColumnRef *cref;
+                
+                /*
+                 * We need to handle the case where the item is a A_star. In this
+                 * case we will need to build group by using targetList.
+                 */
+                if (IsA(item->val, ColumnRef))
+                {
+                    cref = (ColumnRef *)item->val;
+                    if (IsA(linitial(cref->fields), A_Star))
+                    {
+                        has_a_star = true;
+                        continue;
+                    }
+                }
 
                 groupClause = lappend(groupClause, item->val);
+            }
+
+            /*
+             * If there is A_star flag, build the group by clause
+             * using the targetList.
+             */
+            if (has_a_star)
+            {
+                ListCell *lc;
+                foreach (lc, query->targetList)
+                {
+                    TargetEntry *te = lfirst(lc);
+                    ColumnRef *cref = makeNode(ColumnRef);
+
+                    cref->fields = list_make1(makeString(te->resname));
+                    cref->location = exprLocation((Node *)te->expr);
+
+                    groupClause = lappend(groupClause, cref);
+                }
             }
             query->groupClause = transform_group_clause(cpstate, groupClause,
                                                         &query->groupingSets,
@@ -2646,6 +2705,19 @@ static Query *transform_cypher_match_pattern(cypher_parsestate *cpstate,
     if(self->optional == true && clause->next)
     {
         cypher_clause *next = clause->next;
+
+        /*
+         * check if optional match has a subquery node-- it could still
+         * be following a match
+         */
+        if(is_ag_node(next->self, cypher_with))
+        {
+            cypher_with *next_with = (cypher_with *)next->self;
+            if (next_with->subquery_intermediate == true)
+            {
+                next = next->next;
+            }
+        }
         if (is_ag_node(next->self, cypher_match))
         {
             cypher_match *next_self = (cypher_match *)next->self;
@@ -5042,15 +5114,7 @@ static Expr *transform_cypher_edge(cypher_parsestate *cpstate,
          * variables, we want to use the existing ones. So, error if otherwise.
          * If we are in a subquery transform, we are allowed to create new variables
          * in the match, and all variables outside are visible to
-         * the subquery. Since there is no existing SQL logic that allows
-         * subqueries to alter variables of outer queries, we bypass this
-         * logic we would normally use to process WHERE clauses.
-         *
-         * Currently, the EXISTS subquery logic is naive. It returns a boolean
-         * result on the outer queries, but does not restrict the results set.
-         *
-         * TODO: Implement logic to alter outer scope results.
-         *
+         * the subquery.
          */
         if (pstate->p_expr_kind == EXPR_KIND_WHERE &&
             cpstate->subquery_where_flag == false)
@@ -5314,15 +5378,7 @@ static Expr *transform_cypher_node(cypher_parsestate *cpstate,
          * variables, we want to use the existing ones. So, error if otherwise.
          * If we are in a subquery transform, we are allowed to create new variables
          * in the match, and all variables outside are visible to
-         * the subquery. Since there is no existing SQL logic that allows
-         * subqueries to alter variables of outer queries, we bypass this
-         * logic we would normally use to process WHERE clauses.
-         *
-         * Currently, the EXISTS subquery logic is naive. It returns a boolean
-         * result on the outer queries, but does not restrict the results set.
-         *
-         * TODO: Implement logic to alter outer scope results.
-         *
+         * the subquery.
          */
         if (pstate->p_expr_kind == EXPR_KIND_WHERE &&
             cpstate->subquery_where_flag == false)

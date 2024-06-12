@@ -999,43 +999,6 @@ SELECT agtype_string_match_starts_with('"abcdefghijklmnopqrstuvwxyz"', '"bcde"')
 SELECT agtype_string_match_ends_with('"abcdefghijklmnopqrstuvwxyz"', '"vwxy"');
 SELECT agtype_string_match_contains('"abcdefghijklmnopqrstuvwxyz"', '"hijl"');
 
---Agtype Hash Comparison Function
-SELECT agtype_hash_cmp(NULL);
-SELECT agtype_hash_cmp('1'::agtype);
-SELECT agtype_hash_cmp('1.0'::agtype);
-SELECT agtype_hash_cmp('"1"'::agtype);
-SELECT agtype_hash_cmp('[1]'::agtype);
-SELECT agtype_hash_cmp('[1, 1]'::agtype);
-SELECT agtype_hash_cmp('[1, 1, 1]'::agtype);
-SELECT agtype_hash_cmp('[1, 1, 1, 1]'::agtype);
-SELECT agtype_hash_cmp('[1, 1, 1, 1, 1]'::agtype);
-SELECT agtype_hash_cmp('[[1]]'::agtype);
-SELECT agtype_hash_cmp('[[1, 1]]'::agtype);
-SELECT agtype_hash_cmp('[[1], 1]'::agtype);
-SELECT agtype_hash_cmp('[1543872]'::agtype);
-SELECT agtype_hash_cmp('[1, "abcde", 2.0]'::agtype);
-SELECT agtype_hash_cmp(agtype_in('null'));
-SELECT agtype_hash_cmp(agtype_in('[null]'));
-SELECT agtype_hash_cmp(agtype_in('[null, null]'));
-SELECT agtype_hash_cmp(agtype_in('[null, null, null]'));
-SELECT agtype_hash_cmp(agtype_in('[null, null, null, null]'));
-SELECT agtype_hash_cmp(agtype_in('[null, null, null, null, null]'));
-SELECT agtype_hash_cmp('{"id":1, "label":"test", "properties":{"id":100}}'::agtype);
-SELECT agtype_hash_cmp('{"id":1, "label":"test", "properties":{"id":100}}::vertex'::agtype);
-
-SELECT agtype_hash_cmp('{"id":2, "start_id":1, "end_id": 3, "label":"elabel", "properties":{}}'::agtype);
-SELECT agtype_hash_cmp('{"id":2, "start_id":1, "end_id": 3, "label":"elabel", "properties":{}}::edge'::agtype);
-
-SELECT agtype_hash_cmp('
-	[{"id":1, "label":"test", "properties":{"id":100}}::vertex,
-	 {"id":2, "start_id":1, "end_id": 3, "label":"elabel", "properties":{}}::edge,
-	 {"id":5, "label":"vlabel", "properties":{}}::vertex]'::agtype);
-
-SELECT agtype_hash_cmp('
-	[{"id":1, "label":"test", "properties":{"id":100}}::vertex,
-	 {"id":2, "start_id":1, "end_id": 3, "label":"elabel", "properties":{}}::edge,
-	 {"id":5, "label":"vlabel", "properties":{}}::vertex]::path'::agtype);
-
 --Agtype BTree Comparison Function
 SELECT agtype_btree_cmp('1'::agtype, '1'::agtype);
 SELECT agtype_btree_cmp('1'::agtype, '1.0'::agtype);
@@ -1098,9 +1061,25 @@ SELECT ag_catalog.agtype_volatile_wrapper(-32767::int2);
 -- These should fail
 SELECT ag_catalog.agtype_volatile_wrapper(32768::int2);
 SELECT ag_catalog.agtype_volatile_wrapper(-32768::int2);
+
+--
+-- test that age_tostring can handle an UNKNOWNOID type
+--
+SELECT age_tostring('a');
+
+--
+-- test agtype_build_map_as_agtype_value via agtype_build_map
+--
+SELECT * FROM create_graph('agtype_build_map');
+SELECT * FROM cypher('agtype_build_map', $$ RETURN ag_catalog.agtype_build_map('1', '1', 2, 2, 3.14, 3.14, 'e', 2.71)
+                                         $$) AS (results agtype);
+SELECT agtype_build_map('1', '1', 2, 2, 3.14, 3.14, 'e', 2.71);
+
 --
 -- Cleanup
 --
+SELECT drop_graph('agtype_build_map', true);
+
 DROP TABLE agtype_table;
 
 --

@@ -58,6 +58,7 @@ typedef struct cypher_return
     Node *limit;
 
     bool all_or_distinct;
+    bool returnless_union;
     SetOperation op;
     List *larg; /* lefthand argument of the unions */
     List *rarg; /*righthand argument of the unions */
@@ -67,6 +68,7 @@ typedef struct cypher_with
 {
     ExtensibleNode extensible;
     bool distinct;
+    bool subquery_intermediate; //flag that denotes a subquery node
     List *items; // a list of ResTarget's
     List *order_by;
     Node *skip;
@@ -209,6 +211,40 @@ typedef struct cypher_map
     int location;
     bool keep_null; // if false, keyvals with null value are removed
 } cypher_map;
+
+typedef struct cypher_map_projection
+{
+    ExtensibleNode extensible;
+    ColumnRef *map_var; /* must be a map, vertex or an edge */
+    List *map_elements; /* list of cypher_map_projection_element */
+    int location;
+} cypher_map_projection;
+
+typedef enum cypher_map_projection_element_type
+{
+    PROPERTY_SELECTOR = 0,  /* map_var { .key } */
+    VARIABLE_SELECTOR,      /* map_var { value } */
+    LITERAL_ENTRY,          /* map_var { key: value } */
+    ALL_PROPERTIES_SELECTOR /* map_var { .* } */
+} cypher_map_projection_element_type;
+
+typedef struct cypher_map_projection_element
+{
+    ExtensibleNode extensible;
+    cypher_map_projection_element_type type;
+
+    /*
+     * key and/or value can be null depending on the type
+     *
+     * For PROPERTY_SELECTOR, value is null.
+     * For VARIABLE_SELECTOR, key is null, and value is a ColumnRef.
+     * For LITERAL_ENTRY, none is null (value is an Expr).
+     * For ALL_PROPERTIES_SELECTOR, both are null.
+     */
+    char *key;
+    Node *value;
+    int location;
+} cypher_map_projection_element;
 
 typedef struct cypher_list
 {

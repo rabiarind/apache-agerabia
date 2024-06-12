@@ -105,6 +105,7 @@ void out_cypher_return(StringInfo str, const ExtensibleNode *node)
     WRITE_NODE_FIELD(limit);
 
     WRITE_BOOL_FIELD(all_or_distinct);
+    WRITE_BOOL_FIELD(returnless_union);
     WRITE_ENUM_FIELD(op, SetOperation);
     WRITE_NODE_FIELD(larg);
     WRITE_NODE_FIELD(rarg);
@@ -116,6 +117,7 @@ void out_cypher_with(StringInfo str, const ExtensibleNode *node)
     DEFINE_AG_NODE(cypher_with);
 
     WRITE_BOOL_FIELD(distinct);
+    WRITE_BOOL_FIELD(subquery_intermediate);
     WRITE_NODE_FIELD(items);
     WRITE_NODE_FIELD(order_by);
     WRITE_NODE_FIELD(skip);
@@ -248,6 +250,15 @@ void out_cypher_map(StringInfo str, const ExtensibleNode *node)
     DEFINE_AG_NODE(cypher_map);
 
     WRITE_NODE_FIELD(keyvals);
+    WRITE_LOCATION_FIELD(location);
+}
+
+void out_cypher_map_projection(StringInfo str, const ExtensibleNode *node)
+{
+    DEFINE_AG_NODE(cypher_map_projection);
+
+    WRITE_NODE_FIELD(map_var);
+    WRITE_NODE_FIELD(map_elements);
     WRITE_LOCATION_FIELD(location);
 }
 
